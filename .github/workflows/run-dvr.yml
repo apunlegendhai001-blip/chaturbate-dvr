@@ -80,12 +80,13 @@ jobs:
           docker rm -f cf-tunnel 2>/dev/null || true
           CONTAINER_ID=$(docker run -d --network host --name cf-tunnel cloudflare/cloudflared:latest tunnel --no-autoupdate run --token "$CLOUDFLARE_TUNNEL_TOKEN")
           echo "Cloudflare tunnel container started: $CONTAINER_ID"
-          echo "Waiting for Cloudflare public URL..."
+          echo "Waiting for tunnel to be ready..."
           for i in $(seq 1 60); do
-            echo "Checking tunnel logs... (attempt $i/60)"
-            if docker logs "$CONTAINER_ID" 2>&1 | grep -qE 'https://[a-z0-9.-]+trycloudflare.com'; then
-              echo "Found tunnel URL!"
-              docker logs "$CONTAINER_ID" 2>&1 | grep -oE 'https://[a-z0-9.-]+trycloudflare.com' | head -n 1 | tee tunnel-url.txt
+            echo "Checking tunnel status... (attempt $i/60)"
+            if docker logs "$CONTAINER_ID" 2>&1 | grep -q "Registered tunnel connection"; then
+              REGISTERED_CONNECTIONS=$(docker logs "$CONTAINER_ID" 2>&1 | grep -c "Registered tunnel connection" || echo "0")
+              echo "Tunnel is ready with $REGISTERED_CONNECTIONS connection(s)"
+              echo "tunnel-ready=true" >> "$GITHUB_OUTPUT"
               break
             fi
             if docker logs "$CONTAINER_ID" 2>&1 | grep -q "Failed to create tunnel\|Invalid token\|Authentication failed\|tunnel not found"; then
@@ -96,21 +97,22 @@ jobs:
             fi
             sleep 2
           done
-          if [ ! -s tunnel-url.txt ]; then
-            echo "Failed to detect Cloudflare Tunnel URL after 2 minutes" >&2
+          if ! docker logs "$CONTAINER_ID" 2>&1 | grep -q "Registered tunnel connection"; then
+            echo "Failed to establish Cloudflare Tunnel connection after 2 minutes" >&2
             echo "=== Full cloudflared logs ==="
             docker logs "$CONTAINER_ID" 2>&1
             docker rm -f "$CONTAINER_ID" 2>/dev/null || true
             exit 1
           fi
-          URL=$(cat tunnel-url.txt)
-          echo "Cloudflare public URL: $URL"
-          echo "tunnel-url=$URL" >> "$GITHUB_OUTPUT"
+          echo "✅ Cloudflare Tunnel is connected and ready"
+          echo "tunnel-ready=true" >> "$GITHUB_OUTPUT"
 
-      - name: Show public URL
+      - name: Show tunnel status
         run: |
           echo "========================"
-          echo "Public tunnel URL: ${{ steps.cloudflare-tunnel.outputs.tunnel-url }}"
+          if [ "${{ steps.cloudflare-tunnel.outputs.tunnel-ready }}" = "true" ]; then
+            echo "✅ Cloudflare Tunnel is connected and DVR is accessible"
+          fi
           echo "========================"
 
       - name: Keep DVR running for 5 hours
