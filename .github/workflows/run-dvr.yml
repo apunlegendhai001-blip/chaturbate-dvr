@@ -22,41 +22,38 @@ jobs:
           restore-keys: |
             dvr-channels-
 
-      - name: Install cloudflared
-        run: |
-          curl -L -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-          chmod +x cloudflared
-          ./cloudflared --version
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
-      - name: Start Cloudflare Tunnel
-        env:
-          CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+      - name: Install LocalTunnel
+        run: |
+          npm install -g localtunnel
+          lt --version
+
+      - name: Start LocalTunnel
         run: |
           set -euo pipefail
-          if [ -z "$CLOUDFLARE_TUNNEL_TOKEN" ]; then
-            echo "CLOUDFLARE_TUNNEL_TOKEN is required" >&2
-            exit 1
-          fi
-          nohup ./cloudflared tunnel --url http://localhost:8080 --token "$CLOUDFLARE_TUNNEL_TOKEN" > tunnel.log 2>&1 &
-          TUNNEL_PID=$!
-          echo "Cloudflare tunnel started with PID $TUNNEL_PID"
-          echo "Waiting for tunnel URL..."
+          nohup lt --port 8080 > localtunnel.log 2>&1 &
+          LT_PID=$!
+          echo "LocalTunnel started with PID $LT_PID"
+          echo "Waiting for LocalTunnel URL..."
           for i in $(seq 1 20); do
-            if grep -qE 'https://[a-z0-9.-]+trycloudflare.com' tunnel.log; then
-              grep -oE 'https://[a-z0-9.-]+trycloudflare.com' tunnel.log | head -n 1 | tee tunnel-url.txt
+            if grep -qE 'https://[a-z0-9.-]+\.loca\.lt' localtunnel.log; then
+              grep -oE 'https://[a-z0-9.-]+\.loca\.lt' localtunnel.log | head -n 1 | tee tunnel-url.txt
               break
             fi
             sleep 1
           done
           if [ ! -s tunnel-url.txt ]; then
-            echo "Failed to detect Cloudflare Tunnel URL" >&2
-            echo "=== tunnel.log ==="
-            tail -n 50 tunnel.log
-            kill "$TUNNEL_PID" 2>/dev/null || true
+            echo "Failed to detect LocalTunnel URL" >&2
+            echo "=== localtunnel.log ==="
+            tail -n 50 localtunnel.log
+            kill "$LT_PID" 2>/dev/null || true
             exit 1
           fi
           URL=$(cat tunnel-url.txt)
-          echo "Cloudflare public URL: $URL"
+          echo "LocalTunnel public URL: $URL"
           echo "tunnel-url=$URL" >> "$GITHUB_OUTPUT"
 
       - name: Run DVR for 5 hours
