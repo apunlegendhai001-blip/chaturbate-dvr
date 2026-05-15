@@ -11,10 +11,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.23"
-
       - uses: actions/cache@v4
         with:
           path: conf/
@@ -22,11 +18,10 @@ jobs:
           restore-keys: |
             dvr-channels-
 
-      - name: Install cloudflared
+      - name: Start DVR with Docker Compose
         run: |
-          curl -L -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-          chmod +x cloudflared
-          ./cloudflared --version
+          docker compose up -d chaturbate-dvr
+          docker ps --filter "name=chaturbate-dvr"
 
       - name: Start Cloudflare Tunnel
         id: cloudflare-tunnel
@@ -38,22 +33,20 @@ jobs:
             echo "CLOUDFLARE_TUNNEL_TOKEN is required" >&2
             exit 1
           fi
-          nohup ./cloudflared tunnel --url http://localhost:8080 --token "$CLOUDFLARE_TUNNEL_TOKEN" > tunnel.log 2>&1 &
-          TUNNEL_PID=$!
-          echo "Cloudflare tunnel started with PID $TUNNEL_PID"
+          docker rm -f cf-tunnel 2>/dev/null || true
+          CONTAINER_ID=$(docker run -d --network host --name cf-tunnel cloudflare/cloudflared:latest tunnel --no-autoupdate run --token "$CLOUDFLARE_TUNNEL_TOKEN")
+          echo "Cloudflare tunnel container started: $CONTAINER_ID"
           echo "Waiting for Cloudflare public URL..."
-          for i in $(seq 1 20); do
-            if grep -qE 'https://[a-z0-9.-]+trycloudflare.com' tunnel.log; then
-              grep -oE 'https://[a-z0-9.-]+trycloudflare.com' tunnel.log | head -n 1 | tee tunnel-url.txt
-              break
-            fi
+          for i in $(seq 1 40); do
+            docker logs "$CONTAINER_ID" 2>&1 | grep -qE 'https://[a-z0-9.-]+trycloudflare.com' && break
             sleep 1
           done
+          docker logs "$CONTAINER_ID" 2>&1 | grep -oE 'https://[a-z0-9.-]+trycloudflare.com' | head -n 1 | tee tunnel-url.txt
           if [ ! -s tunnel-url.txt ]; then
             echo "Failed to detect Cloudflare Tunnel URL" >&2
-            echo "=== tunnel.log ==="
-            tail -n 50 tunnel.log
-            kill "$TUNNEL_PID" 2>/dev/null || true
+            echo "=== cloudflared logs ==="
+            docker logs "$CONTAINER_ID" 2>&1 | tail -n 50
+            docker rm -f "$CONTAINER_ID" 2>/dev/null || true
             exit 1
           fi
           URL=$(cat tunnel-url.txt)
@@ -66,12 +59,7 @@ jobs:
           echo "Public tunnel URL: ${{ steps.cloudflare-tunnel.outputs.tunnel-url }}"
           echo "========================"
 
-      - name: Run DVR for 5 hours
+      - name: Keep DVR running for 5 hours
         run: |
-          set -euo pipefail
-          nohup go run . > dvr_output.log 2>&1 &
-          PID=$!
-          echo "DVR started with PID $PID"
-          sleep 18000  # 5 hours in seconds
-          kill $PID 2>/dev/null || true
-          echo "DVR stopped"
+          echo "DVR is running via Docker Compose. Keeping the runner alive for 5 hours."
+          sleep 18000
