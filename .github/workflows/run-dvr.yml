@@ -1,0 +1,25 @@
+name: Run DVR
+
+on:
+  schedule:
+    - cron: '0 */5 * * *'  # Runs every 5 hours
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  run-dvr:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Run DVR for 5 hours
+        run: |
+          nohup go run . > dvr_output.log 2>&1 &
+          PID=$!
+          echo "DVR started with PID $PID"
+          sleep 18000  # 5 hours in seconds
+          kill $PID
+          echo "DVR stopped"
