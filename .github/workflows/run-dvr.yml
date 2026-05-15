@@ -73,18 +73,18 @@ jobs:
           
           echo "⏳ Starting Cloudflare tunnel..."
           
-          # Create a named pipe for reading tunnel output
+          # Clean up previous logs
           rm -f tunnel.log
-          mkfifo tunnel.log || true
           
-          # Start cloudflared and capture output
-          cloudflared tunnel --url http://localhost:8080 --no-autoupdate 2>&1 | tee tunnel.log &
+          # Start cloudflared and capture output to log file
+          cloudflared tunnel --url http://localhost:8080 --no-autoupdate > tunnel.log 2>&1 &
           TUNNEL_PID=$!
           echo "Tunnel process started (PID: $TUNNEL_PID)"
           
           # Wait for tunnel URL to appear in the log
           TUNNEL_URL=""
           for i in $(seq 1 60); do
+            # Read the log file and look for the URL
             if [ -f tunnel.log ]; then
               TUNNEL_URL=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' tunnel.log 2>/dev/null | head -1 || true)
               if [ -n "$TUNNEL_URL" ]; then
@@ -100,8 +100,8 @@ jobs:
             echo "❌ Failed to get tunnel URL after 60 seconds" >&2
             echo "=== Tunnel process info ==="
             ps aux | grep cloudflared || true
-            echo "=== Last tunnel output ==="
-            tail -20 tunnel.log 2>/dev/null || true
+            echo "=== Full tunnel output ==="
+            cat tunnel.log 2>/dev/null || echo "(no log file)"
             kill $TUNNEL_PID 2>/dev/null || true
             exit 1
           fi
