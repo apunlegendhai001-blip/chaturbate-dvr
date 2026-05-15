@@ -56,64 +56,59 @@ jobs:
             exit 1
           fi
 
-      - name: Validate Cloudflare Tunnel Token
-        env:
-          CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
-        run: |
-          if [ -z "$CLOUDFLARE_TUNNEL_TOKEN" ]; then
-            echo "❌ CLOUDFLARE_TUNNEL_TOKEN secret is not set" >&2
-            echo "Please add it in: Repository Settings → Secrets and variables → Actions → New repository secret" >&2
-            exit 1
-          fi
-          echo "✅ Cloudflare tunnel token is configured"
-
-      - name: Start Cloudflare Tunnel
+      - name: Start Cloudflare Tunnel (Free)
         id: cloudflare-tunnel
-        env:
-          CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -z "$CLOUDFLARE_TUNNEL_TOKEN" ]; then
-            echo "CLOUDFLARE_TUNNEL_TOKEN is required" >&2
-            exit 1
-          fi
-          docker rm -f cf-tunnel 2>/dev/null || true
-          CONTAINER_ID=$(docker run -d --network host --name cf-tunnel cloudflare/cloudflared:latest tunnel --no-autoupdate run --token "$CLOUDFLARE_TUNNEL_TOKEN")
-          echo "Cloudflare tunnel container started: $CONTAINER_ID"
-          echo "Waiting for tunnel to be ready..."
-          for i in $(seq 1 60); do
-            echo "Checking tunnel status... (attempt $i/60)"
-            if docker logs "$CONTAINER_ID" 2>&1 | grep -q "Registered tunnel connection"; then
-              REGISTERED_CONNECTIONS=$(docker logs "$CONTAINER_ID" 2>&1 | grep -c "Registered tunnel connection" || echo "0")
-              echo "Tunnel is ready with $REGISTERED_CONNECTIONS connection(s)"
-              echo "tunnel-ready=true" >> "$GITHUB_OUTPUT"
-              break
+          # Download and install cloudflared
+          curl -L --output cloudflared.deb \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared.deb
+          
+          # Start free tunnel and capture output
+          rm -f tunnel.log
+          cloudflared tunnel --url http://localhost:8080 --no-autoupdate > tunnel.log 2>&1 &
+          TUNNEL_PID=$!
+          echo "Tunnel PID: $TUNNEL_PID"
+          
+          # Wait for tunnel URL to appear
+          echo "⏳ Waiting for tunnel URL..."
+          TUNNEL_URL=""
+          for i in $(seq 1 30); do
+            if [ -f tunnel.log ]; then
+              TUNNEL_URL=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' tunnel.log | head -1)
+              if [ -n "$TUNNEL_URL" ]; then
+                echo "✅ Tunnel URL found: $TUNNEL_URL"
+                break
+              fi
             fi
-            if docker logs "$CONTAINER_ID" 2>&1 | grep -q "Failed to create tunnel\|Invalid token\|Authentication failed\|tunnel not found"; then
-              echo "Tunnel authentication or creation failed" >&2
-              docker logs "$CONTAINER_ID" 2>&1 | tail -n 20
-              docker rm -f "$CONTAINER_ID" 2>/dev/null || true
-              exit 1
-            fi
+            echo "Checking tunnel status... (attempt $i/30)"
             sleep 2
           done
-          if ! docker logs "$CONTAINER_ID" 2>&1 | grep -q "Registered tunnel connection"; then
-            echo "Failed to establish Cloudflare Tunnel connection after 2 minutes" >&2
-            echo "=== Full cloudflared logs ==="
-            docker logs "$CONTAINER_ID" 2>&1
-            docker rm -f "$CONTAINER_ID" 2>/dev/null || true
+          
+          if [ -z "$TUNNEL_URL" ]; then
+            echo "❌ Failed to get tunnel URL after 60 seconds" >&2
+            echo "=== Tunnel logs ==="
+            cat tunnel.log 2>/dev/null || true
             exit 1
           fi
+          
+          # Save URL to file and output
+          echo "$TUNNEL_URL" > tunnel-url.txt
+          echo "tunnel-url=$TUNNEL_URL" >> "$GITHUB_OUTPUT"
           echo "✅ Cloudflare Tunnel is connected and ready"
-          echo "tunnel-ready=true" >> "$GITHUB_OUTPUT"
 
-      - name: Show tunnel status
+      - name: Show public URL
         run: |
-          echo "========================"
-          if [ "${{ steps.cloudflare-tunnel.outputs.tunnel-ready }}" = "true" ]; then
-            echo "✅ Cloudflare Tunnel is connected and DVR is accessible"
-          fi
-          echo "========================"
+          echo "╔════════════════════════════════════════════════════════════╗"
+          echo "║                    🌐 DVR WEB UI ACCESS                    ║"
+          echo "╚════════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "   URL: ${{ steps.cloudflare-tunnel.outputs.tunnel-url }}"
+          echo ""
+          echo "   Status: ✅ LIVE AND RUNNING"
+          echo ""
+          echo "════════════════════════════════════════════════════════════"
 
       - name: Keep DVR running for 5 hours
         run: |
