@@ -39,6 +39,34 @@ jobs:
             exit 1
           fi
 
+      - name: Verify DVR is accessible
+        run: |
+          echo "Checking if DVR is responding on port 8080..."
+          for i in $(seq 1 30); do
+            if curl -f http://localhost:8080 > /dev/null 2>&1; then
+              echo "✅ DVR is accessible on port 8080"
+              break
+            fi
+            echo "Waiting for DVR to respond... ($i/30)"
+            sleep 2
+          done
+          if ! curl -f http://localhost:8080 > /dev/null 2>&1; then
+            echo "❌ DVR is not responding on port 8080" >&2
+            docker compose logs chaturbate-dvr
+            exit 1
+          fi
+
+      - name: Validate Cloudflare Tunnel Token
+        env:
+          CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_TUNNEL_TOKEN" ]; then
+            echo "❌ CLOUDFLARE_TUNNEL_TOKEN secret is not set" >&2
+            echo "Please add it in: Repository Settings → Secrets and variables → Actions → New repository secret" >&2
+            exit 1
+          fi
+          echo "✅ Cloudflare tunnel token is configured"
+
       - name: Start Cloudflare Tunnel
         id: cloudflare-tunnel
         env:
@@ -47,21 +75,31 @@ jobs:
           set -euo pipefail
           if [ -z "$CLOUDFLARE_TUNNEL_TOKEN" ]; then
             echo "CLOUDFLARE_TUNNEL_TOKEN is required" >&2
-            exit 1sa
+            exit 1
           fi
           docker rm -f cf-tunnel 2>/dev/null || true
           CONTAINER_ID=$(docker run -d --network host --name cf-tunnel cloudflare/cloudflared:latest tunnel --no-autoupdate run --token "$CLOUDFLARE_TUNNEL_TOKEN")
           echo "Cloudflare tunnel container started: $CONTAINER_ID"
           echo "Waiting for Cloudflare public URL..."
-          for i in $(seq 1 40); do
-            docker logs "$CONTAINER_ID" 2>&1 | grep -qE 'https://[a-z0-9.-]+trycloudflare.com' && break
-            sleep 1
+          for i in $(seq 1 60); do
+            echo "Checking tunnel logs... (attempt $i/60)"
+            if docker logs "$CONTAINER_ID" 2>&1 | grep -qE 'https://[a-z0-9.-]+trycloudflare.com'; then
+              echo "Found tunnel URL!"
+              docker logs "$CONTAINER_ID" 2>&1 | grep -oE 'https://[a-z0-9.-]+trycloudflare.com' | head -n 1 | tee tunnel-url.txt
+              break
+            fi
+            if docker logs "$CONTAINER_ID" 2>&1 | grep -q "Failed to create tunnel\|Invalid token\|Authentication failed\|tunnel not found"; then
+              echo "Tunnel authentication or creation failed" >&2
+              docker logs "$CONTAINER_ID" 2>&1 | tail -n 20
+              docker rm -f "$CONTAINER_ID" 2>/dev/null || true
+              exit 1
+            fi
+            sleep 2
           done
-          docker logs "$CONTAINER_ID" 2>&1 | grep -oE 'https://[a-z0-9.-]+trycloudflare.com' | head -n 1 | tee tunnel-url.txt
           if [ ! -s tunnel-url.txt ]; then
-            echo "Failed to detect Cloudflare Tunnel URL" >&2
-            echo "=== cloudflared logs ==="
-            docker logs "$CONTAINER_ID" 2>&1 | tail -n 50
+            echo "Failed to detect Cloudflare Tunnel URL after 2 minutes" >&2
+            echo "=== Full cloudflared logs ==="
+            docker logs "$CONTAINER_ID" 2>&1
             docker rm -f "$CONTAINER_ID" 2>/dev/null || true
             exit 1
           fi
