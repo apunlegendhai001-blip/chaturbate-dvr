@@ -118,7 +118,7 @@ jobs:
       - name: Cleanup containers
         if: always()
         run: |
-          echo "Cleaning up containers..."
-          docker rm -f cf-tunnel 2>/dev/null || true
+          echo "Cleaning up..."
+          pkill -f cloudflared 2>/dev/null || true
           docker compose down 2>/dev/null || true
           echo "Cleanup completed"
