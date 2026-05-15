@@ -22,6 +22,31 @@ jobs:
           restore-keys: |
             dvr-channels-
 
+      - name: Install cloudflared
+        run: |
+          curl -L -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared
+
+      - name: Start Cloudflare Tunnel
+        env:
+          CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_TUNNEL_TOKEN" ]; then
+            echo "CLOUDFLARE_TUNNEL_TOKEN is required" >&2
+            exit 1
+          fi
+          ./cloudflared tunnel --url http://localhost:8080 --token "$CLOUDFLARE_TUNNEL_TOKEN" > tunnel.log 2>&1 &
+          TUNNEL_PID=$!
+          echo "Cloudflare tunnel started with PID $TUNNEL_PID"
+          sleep 5
+          grep -o 'https://[a-z0-9.-]*trycloudflare.com' tunnel.log | head -n 1 | tee tunnel-url.txt
+          if [ ! -s tunnel-url.txt ]; then
+            echo "Failed to detect Cloudflare Tunnel URL" >&2
+            tail -n 20 tunnel.log
+            exit 1
+          fi
+          echo "Cloudflare public URL: $(cat tunnel-url.txt)"
+
       - name: Run DVR for 5 hours
         run: |
           nohup go run . > dvr_output.log 2>&1 &
