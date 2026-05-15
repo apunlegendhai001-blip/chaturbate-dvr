@@ -20,8 +20,24 @@ jobs:
 
       - name: Start DVR with Docker Compose
         run: |
+          set -euo pipefail
+          echo "Starting DVR with Docker Compose..."
           docker compose up -d chaturbate-dvr
-          docker ps --filter "name=chaturbate-dvr"
+          echo "Waiting for DVR container to be ready..."
+          for i in $(seq 1 30); do
+            if docker ps --filter "name=chaturbate-dvr" --filter "status=running" | grep -q chaturbate-dvr; then
+              echo "DVR container is running"
+              docker ps --filter "name=chaturbate-dvr"
+              break
+            fi
+            echo "Waiting for DVR container... ($i/30)"
+            sleep 2
+          done
+          if ! docker ps --filter "name=chaturbate-dvr" --filter "status=running" | grep -q chaturbate-dvr; then
+            echo "DVR container failed to start" >&2
+            docker compose logs chaturbate-dvr
+            exit 1
+          fi
 
       - name: Start Cloudflare Tunnel
         id: cloudflare-tunnel
@@ -31,7 +47,7 @@ jobs:
           set -euo pipefail
           if [ -z "$CLOUDFLARE_TUNNEL_TOKEN" ]; then
             echo "CLOUDFLARE_TUNNEL_TOKEN is required" >&2
-            exit 1
+            exit 1sa
           fi
           docker rm -f cf-tunnel 2>/dev/null || true
           CONTAINER_ID=$(docker run -d --network host --name cf-tunnel cloudflare/cloudflared:latest tunnel --no-autoupdate run --token "$CLOUDFLARE_TUNNEL_TOKEN")
@@ -63,3 +79,11 @@ jobs:
         run: |
           echo "DVR is running via Docker Compose. Keeping the runner alive for 5 hours."
           sleep 18000
+
+      - name: Cleanup containers
+        if: always()
+        run: |
+          echo "Cleaning up containers..."
+          docker rm -f cf-tunnel 2>/dev/null || true
+          docker compose down 2>/dev/null || true
+          echo "Cleanup completed"
