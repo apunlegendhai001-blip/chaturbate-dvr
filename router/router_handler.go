@@ -2,7 +2,6 @@ package router
 
 import (
 	"fmt"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
