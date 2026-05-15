@@ -18,6 +18,12 @@ jobs:
           restore-keys: |
             dvr-channels-
 
+      - name: Build Docker image
+        run: |
+          echo "Building Docker image..."
+          docker compose build --no-cache chaturbate-dvr
+          echo "✅ Docker image built successfully"
+
       - name: Start DVR with Docker Compose
         run: |
           set -euo pipefail
