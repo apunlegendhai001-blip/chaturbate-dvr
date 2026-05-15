@@ -71,36 +71,42 @@ jobs:
             https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared.deb
           
-          # Start free tunnel and capture output
-          rm -f tunnel.log
-          cloudflared tunnel --url http://localhost:8080 --no-autoupdate > tunnel.log 2>&1 &
-          TUNNEL_PID=$!
-          echo "Tunnel PID: $TUNNEL_PID"
+          echo "⏳ Starting Cloudflare tunnel..."
           
-          # Wait for tunnel URL to appear
-          echo "⏳ Waiting for tunnel URL..."
+          # Create a named pipe for reading tunnel output
+          rm -f tunnel.log
+          mkfifo tunnel.log || true
+          
+          # Start cloudflared and capture output
+          cloudflared tunnel --url http://localhost:8080 --no-autoupdate 2>&1 | tee tunnel.log &
+          TUNNEL_PID=$!
+          echo "Tunnel process started (PID: $TUNNEL_PID)"
+          
+          # Wait for tunnel URL to appear in the log
           TUNNEL_URL=""
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do
             if [ -f tunnel.log ]; then
-              TUNNEL_URL=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' tunnel.log | head -1)
+              TUNNEL_URL=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' tunnel.log 2>/dev/null | head -1 || true)
               if [ -n "$TUNNEL_URL" ]; then
                 echo "✅ Tunnel URL found: $TUNNEL_URL"
                 break
               fi
             fi
-            echo "Checking tunnel status... (attempt $i/30)"
-            sleep 2
+            echo "Waiting for tunnel URL... (attempt $i/60)"
+            sleep 1
           done
           
           if [ -z "$TUNNEL_URL" ]; then
             echo "❌ Failed to get tunnel URL after 60 seconds" >&2
-            echo "=== Tunnel logs ==="
-            cat tunnel.log 2>/dev/null || true
+            echo "=== Tunnel process info ==="
+            ps aux | grep cloudflared || true
+            echo "=== Last tunnel output ==="
+            tail -20 tunnel.log 2>/dev/null || true
+            kill $TUNNEL_PID 2>/dev/null || true
             exit 1
           fi
           
-          # Save URL to file and output
-          echo "$TUNNEL_URL" > tunnel-url.txt
+          # Save URL to output
           echo "tunnel-url=$TUNNEL_URL" >> "$GITHUB_OUTPUT"
           echo "✅ Cloudflare Tunnel is connected and ready"
 
