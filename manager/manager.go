@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -21,6 +22,15 @@ import (
 type Manager struct {
 	Channels sync.Map
 	SSE      *sse.Server
+}
+
+// getConfigPath returns the path where channels.json should be stored.
+// It checks the DVR_CONFIG_PATH environment variable first, then defaults to ./conf
+func getConfigPath() string {
+	if path := os.Getenv("DVR_CONFIG_PATH"); path != "" {
+		return filepath.Join(path, "channels.json")
+	}
+	return "./conf/channels.json"
 }
 
 // New initializes a new Manager instance with an SSE server.
@@ -50,23 +60,29 @@ func (m *Manager) SaveConfig() error {
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}
-	if err := os.MkdirAll("./conf", 0777); err != nil {
-		return fmt.Errorf("mkdir all conf: %w", err)
+
+	configPath := getConfigPath()
+	configDir := filepath.Dir(configPath)
+
+	if err := os.MkdirAll(configDir, 0777); err != nil {
+		return fmt.Errorf("mkdir all %s: %w", configDir, err)
 	}
-	if err := os.WriteFile("./conf/channels.json", b, 0777); err != nil {
-		return fmt.Errorf("write file: %w", err)
+	if err := os.WriteFile(configPath, b, 0777); err != nil {
+		return fmt.Errorf("write file %s: %w", configPath, err)
 	}
 	return nil
 }
 
 // LoadConfig loads the channels from JSON and starts them.
 func (m *Manager) LoadConfig() error {
-	b, err := os.ReadFile("./conf/channels.json")
+	configPath := getConfigPath()
+
+	b, err := os.ReadFile(configPath)
 	if os.IsNotExist(err) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("read file: %w", err)
+		return fmt.Errorf("read file %s: %w", configPath, err)
 	}
 
 	var config []*entity.ChannelConfig

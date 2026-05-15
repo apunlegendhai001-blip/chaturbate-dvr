@@ -15,11 +15,38 @@ jobs:
         with:
           go-version: "1.23"
 
+      # Cache the channels config for 30 days
+      - uses: actions/cache@v4
+        with:
+          path: conf/
+          key: dvr-channels-${{ github.run_id }}
+          restore-keys: |
+            dvr-channels-
+
+      # Restore from persistent directory on self-hosted runner (if available)
+      - name: Restore from persistent directory
+        run: |
+          if [ -d "/mnt/dvr-data/conf" ]; then
+            echo "Restoring config from persistent directory..."
+            mkdir -p conf
+            cp /mnt/dvr-data/conf/channels.json conf/ 2>/dev/null || true
+          fi
+
       - name: Run DVR for 5 hours
         run: |
           nohup go run . > dvr_output.log 2>&1 &
           PID=$!
           echo "DVR started with PID $PID"
           sleep 18000  # 5 hours in seconds
-          kill $PID
+          kill $PID 2>/dev/null || true
           echo "DVR stopped"
+
+      # Backup to persistent directory on self-hosted runner
+      - name: Backup to persistent directory
+        if: always()
+        run: |
+          if [ -f "conf/channels.json" ]; then
+            mkdir -p /mnt/dvr-data/conf
+            cp conf/channels.json /mnt/dvr-data/conf/ || true
+            echo "Config backed up to persistent directory"
+          fi
